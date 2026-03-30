@@ -1,0 +1,30 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Streamlit App",
+            "type": "python",
+            "request": "launch",
+            "module": "streamlit",
+            "args": ["run", "app.py", "--server.port=8501"],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Generate Demo Data",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/generate_demo_data.py",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Train Model (CLI)",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/train.py",
+            "args": ["data/train"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
