@@ -220,7 +220,7 @@ def train_model(data_dir: str, progress_callback=None):
     if progress_callback:
         progress_callback(0.85, "Saving model and plots...")
 
-    joblib.dump(model_bundle, os.path.join(MODELS_DIR, "svm_model.pkl"))
+    joblib.dump(model_bundle, os.path.join(MODELS_DIR, "rcnn_model.pkl"))
     joblib.dump(scaler, os.path.join(MODELS_DIR, "scaler.pkl"))
 
     cm_path = _plot_confusion_matrix(cm, RESULTS_DIR)
@@ -325,7 +325,7 @@ def _plot_cv_scores(scores: np.ndarray, save_dir: str) -> str:
 
 def load_model():
     """Load detector and scaler from disk, rejecting stale incompatible files."""
-    model_path = os.path.join(MODELS_DIR, "svm_model.pkl")
+    model_path = os.path.join(MODELS_DIR, "rcnn_model.pkl")
     scaler_path = os.path.join(MODELS_DIR, "scaler.pkl")
 
     if not os.path.exists(model_path) or not os.path.exists(scaler_path):

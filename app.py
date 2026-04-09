@@ -2,7 +2,7 @@
 app.py
 ------
 Streamlit UI for Industrial Defect Detection System.
-Supports both Classic (SVM) and R-CNN (Deep Learning) models.
+Supports both Classic (R-CNN) and R-CNN (Deep Learning) models.
 """
 
 import sys
@@ -34,23 +34,12 @@ def get_modules():
            generate_dataset, process_video, read_video_bytes
 
 
-@st.cache_resource(show_spinner=False)
-def get_rcnn_modules():
-    from train_rcnn import train_rcnn_model, load_rcnn_model
-    from predict_rcnn import predict_single_rcnn, make_rcnn_pipeline_figure
-    return train_rcnn_model, load_rcnn_model, predict_single_rcnn, make_rcnn_pipeline_figure
-
-
 train_model, load_model, predict_single, make_pipeline_figure, \
     generate_dataset, process_video, read_video_bytes = get_modules()
 
-train_rcnn_model, load_rcnn_model, predict_single_rcnn, make_rcnn_pipeline_figure = get_rcnn_modules()
-
-
-for k, v in {"model_trained": False, "rcnn_trained": False,
-             "train_results": None, "rcnn_train_results": None,
-             "history": [], "video_result": None, "last_result": None,
-             "model_type": "Classic (SVM)"}.items():
+for k, v in {"model_trained": False, 
+             "train_results": None, 
+             "history": [], "video_result": None, "last_result": None}.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -64,20 +53,7 @@ st.divider()
 with st.sidebar:
     st.header("Control Panel")
 
-    # --- Model Selection ---
-    st.subheader("Model Selection")
-    model_choice = st.radio(
-        "Choose model",
-        ["Classic (SVM)", "R-CNN (Deep Learning)"],
-        index=0 if st.session_state.model_type == "Classic (SVM)" else 1,
-        label_visibility="collapsed",
-    )
-    st.session_state.model_type = model_choice
-
-    if model_choice == "Classic (SVM)":
-        st.caption("OneClassSVM anomaly detector with hand-crafted features (fast, lightweight)")
-    else:
-        st.caption("Faster R-CNN with ResNet-50-FPN backbone (deep learning, GPU-accelerated)")
+    st.caption("OneClassSVM anomaly detector with hand-crafted features (fast, lightweight)")
 
     st.divider()
 
@@ -86,21 +62,11 @@ with st.sidebar:
     if clf is not None:
         st.session_state.model_trained = True
 
-    rcnn_model = load_rcnn_model()
-    if rcnn_model is not None:
-        st.session_state.rcnn_trained = True
-
     # --- Model status ---
-    if model_choice == "Classic (SVM)":
-        if st.session_state.model_trained:
-            st.success("SVM Model Ready")
-        else:
-            st.error("SVM Model Not Trained")
+    if st.session_state.model_trained:
+        st.success("R-CNN Model Ready")
     else:
-        if st.session_state.rcnn_trained:
-            st.success("R-CNN Model Ready")
-        else:
-            st.error("R-CNN Model Not Trained")
+        st.error("R-CNN Model Not Trained")
 
     st.divider()
     st.subheader("Dataset")
@@ -119,56 +85,27 @@ with st.sidebar:
     st.divider()
     st.subheader("Training")
 
-    if model_choice == "Classic (SVM)":
-        # SVM Training
-        if st.button("Train SVM Model", width="stretch"):
-            train_dir = os.path.join(DATA_DIR, "train")
-            if not os.path.exists(train_dir):
-                st.error("Run 'Generate Demo Dataset' first.")
-            else:
-                progress_bar = st.progress(0)
-                status_text_el = st.empty()
+    # R-CNN Training
+    if st.button("Train R-CNN Model", width="stretch"):
+        train_dir = os.path.join(DATA_DIR, "train")
+        if not os.path.exists(train_dir):
+            st.error("Run 'Generate Demo Dataset' first.")
+        else:
+            progress_bar = st.progress(0)
+            status_text_el = st.empty()
 
-                def update(val, msg):
-                    progress_bar.progress(val)
-                    status_text_el.caption(msg)
+            def update(val, msg):
+                progress_bar.progress(val)
+                status_text_el.caption(msg)
 
-                try:
-                    results = train_model(train_dir, progress_callback=update)
-                    st.session_state.train_results = results
-                    st.session_state.model_trained = True
-                    clf, scaler = load_model()
-                    st.success(f"Accuracy: {results['accuracy']*100:.1f}%")
-                except Exception as e:
-                    st.error(f"Training failed: {e}")
-    else:
-        # R-CNN Training
-        rcnn_epochs = st.slider("Training Epochs", 3, 20, 5,
-                                help="More epochs = better accuracy but slower training. 5 is good for CPU.")
-        if st.button("Train R-CNN Model", width="stretch"):
-            train_dir = os.path.join(DATA_DIR, "train")
-            if not os.path.exists(train_dir):
-                st.error("Run 'Generate Demo Dataset' first.")
-            else:
-                progress_bar = st.progress(0)
-                status_text_el = st.empty()
-
-                def update_rcnn(val, msg):
-                    progress_bar.progress(val)
-                    status_text_el.caption(msg)
-
-                try:
-                    results = train_rcnn_model(
-                        train_dir, epochs=rcnn_epochs,
-                        progress_callback=update_rcnn
-                    )
-                    st.session_state.rcnn_train_results = results
-                    st.session_state.rcnn_trained = True
-                    rcnn_model = load_rcnn_model()
-                    acc = results.get("accuracy", 0)
-                    st.success(f"R-CNN trained! Test Accuracy: {acc*100:.1f}%")
-                except Exception as e:
-                    st.error(f"R-CNN training failed: {e}")
+            try:
+                results = train_model(train_dir, progress_callback=update)
+                st.session_state.train_results = results
+                st.session_state.model_trained = True
+                clf, scaler = load_model()
+                st.success(f"Accuracy: {results['accuracy']*100:.1f}%")
+            except Exception as e:
+                st.error(f"Training failed: {e}")
 
     if st.session_state.history:
         st.divider()
@@ -193,8 +130,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 ])
 
 # Determine which model is active
-is_rcnn = st.session_state.model_type == "R-CNN (Deep Learning)"
-model_ready = st.session_state.rcnn_trained if is_rcnn else st.session_state.model_trained
+model_ready = st.session_state.model_trained
 
 
 # ── Tab 1: Inspect ───────────────────────────────────────────────────────────
@@ -221,15 +157,11 @@ with tab1:
         if source_img:
             st.image(source_img, caption="Input Image", width="stretch")
             if not model_ready:
-                st.warning(f"Train the {'R-CNN' if is_rcnn else 'SVM'} model first using the sidebar.")
+                st.warning("Train the R-CNN model first using the sidebar.")
             elif st.button("Run Inspection", width="stretch"):
                 with st.spinner("Analyzing..."):
-                    if is_rcnn:
-                        rcnn_model = load_rcnn_model()
-                        result = predict_single_rcnn(source_img, rcnn_model)
-                    else:
-                        clf, scaler = load_model()
-                        result = predict_single(source_img, clf, scaler)
+                    clf, scaler = load_model()
+                    result = predict_single(source_img, clf, scaler)
                 st.session_state.last_result = result
                 st.session_state.history.append(result)
                 st.rerun()
@@ -249,10 +181,6 @@ with tab1:
             m1.metric("Confidence", f"{r['confidence']*100:.1f}%")
             m2.metric("Inference", f"{r['inference_ms']:.0f} ms")
             m3.metric("Est. FPS", f"{1000/max(r['inference_ms'],1):.0f}")
-
-            # Show detection count for R-CNN
-            if "detections" in r and r["detections"]["count"] > 0:
-                st.info(f"R-CNN detected **{r['detections']['count']}** defect region(s)")
 
             st.subheader("Confidence Distribution")
             fig = go.Figure(go.Bar(
@@ -274,7 +202,7 @@ with tab2:
     st.subheader("Video Defect Analysis")
 
     if not model_ready:
-        st.warning(f"Train the {'R-CNN' if is_rcnn else 'SVM'} model first using the sidebar.")
+        st.warning("Train the R-CNN model first using the sidebar.")
     else:
         col_vid, col_cfg = st.columns([2, 1], gap="large")
 
@@ -288,8 +216,7 @@ with tab2:
             st.subheader("Settings")
             frame_skip = st.slider("Analyze every N frames", 1, 10, 3,
                                    help="Higher = faster, lower temporal resolution")
-            st.info(f"Every **{frame_skip}** frame(s) analyzed\n\n"
-                    f"Model: **{'R-CNN' if is_rcnn else 'SVM'}**")
+            st.info(f"Every **{frame_skip}** frame(s) analyzed")
 
         if uploaded_video and st.button("Analyze Video", width="stretch", key="run_video"):
             suffix = "." + uploaded_video.name.split(".")[-1]
@@ -306,18 +233,10 @@ with tab2:
 
             try:
                 with st.spinner(""):
-                    if is_rcnn:
-                        rcnn_model = load_rcnn_model()
-                        vr = process_video(tmp_in.name, None, None,
-                                           frame_skip=frame_skip,
-                                           progress_callback=vid_progress,
-                                           model_type="rcnn",
-                                           rcnn_model=rcnn_model)
-                    else:
-                        clf, scaler = load_model()
-                        vr = process_video(tmp_in.name, clf, scaler,
-                                           frame_skip=frame_skip,
-                                           progress_callback=vid_progress)
+                    clf, scaler = load_model()
+                    vr = process_video(tmp_in.name, clf, scaler,
+                                       frame_skip=frame_skip,
+                                       progress_callback=vid_progress)
                 st.session_state.video_result = vr
                 os.unlink(tmp_in.name)
                 st.rerun()
@@ -383,112 +302,55 @@ with tab2:
 
 # ── Tab 3: Training Results ──────────────────────────────────────────────────
 with tab3:
-    if is_rcnn:
-        # R-CNN training results
-        if not st.session_state.rcnn_trained or st.session_state.rcnn_train_results is None:
-            st.info("Train the R-CNN model from the sidebar to view results here.")
-        else:
-            res = st.session_state.rcnn_train_results
-            st.subheader("R-CNN Model Performance")
-
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Test Accuracy", f"{res.get('accuracy', 0)*100:.1f}%")
-            c2.metric("Test F1 Score", f"{res.get('f1_score', 0):.3f}")
-            c3.metric("Final Loss", f"{res.get('final_loss', 0):.4f}")
-            c4.metric("Training Samples", res["n_samples"])
-
-            col_loss, col_cm = st.columns(2)
-            with col_loss:
-                st.subheader("Training Loss Curve")
-                if res.get("loss_plot_path") and os.path.exists(res["loss_plot_path"]):
-                    st.image(res["loss_plot_path"], width="stretch")
-
-            with col_cm:
-                test_res = res.get("test_results")
-                if test_res and test_res.get("cm_path") and os.path.exists(test_res["cm_path"]):
-                    st.subheader("Test Confusion Matrix")
-                    st.image(test_res["cm_path"], width="stretch")
-
-            st.subheader("Model Info")
-            info_cols = st.columns(4)
-            info_cols[0].metric("Epochs", res["epochs"])
-            info_cols[1].metric("Device", res["device"])
-            info_cols[2].metric("Good Samples", res["n_good"])
-            info_cols[3].metric("Defective Samples", res["n_defective"])
-
-            if test_res and test_res.get("report"):
-                st.subheader("Test Classification Report")
-                st.code(test_res["report"], language=None)
-
-            st.subheader("Dataset Distribution")
-            fig_pie = go.Figure(go.Pie(
-                labels=["Good", "Defective"],
-                values=[res["n_good"], res["n_defective"]],
-                hole=0.5,
-                marker=dict(colors=["#2ecc71", "#e74c3c"]),
-            ))
-            fig_pie.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20))
-            st.plotly_chart(fig_pie, width="stretch")
-
-            # Epoch loss table
-            if res.get("epoch_losses"):
-                with st.expander("View epoch-by-epoch loss"):
-                    loss_df = pd.DataFrame({
-                        "Epoch": list(range(1, len(res["epoch_losses"]) + 1)),
-                        "Loss": [f"{l:.4f}" for l in res["epoch_losses"]],
-                    })
-                    st.dataframe(loss_df, width="stretch", hide_index=True)
+    if not st.session_state.model_trained or st.session_state.train_results is None:
+        st.info("Train the model from the sidebar to view results here.")
     else:
-        # SVM training results (original)
-        if not st.session_state.model_trained or st.session_state.train_results is None:
-            st.info("Train the model from the sidebar to view results here.")
-        else:
-            res = st.session_state.train_results
-            st.subheader("SVM Model Performance")
+        res = st.session_state.train_results
+        st.subheader("R-CNN Model Performance")
 
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Accuracy", f"{res['accuracy']*100:.1f}%")
-            c2.metric("F1 Score", f"{res['f1_score']:.3f}")
-            c3.metric("CV Mean F1", f"{res['cv_mean']:.3f} ± {res['cv_std']:.3f}")
-            c4.metric("Training Samples", res["n_samples"])
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Accuracy", f"{res['accuracy']*100:.1f}%")
+        c2.metric("F1 Score", f"{res['f1_score']:.3f}")
+        c3.metric("CV Mean F1", f"{res['cv_mean']:.3f} ± {res['cv_std']:.3f}")
+        c4.metric("Training Samples", res["n_samples"])
 
-            test_results = res.get("test_results")
-            if test_results:
-                st.subheader("Held-Out Test Performance")
-                t1, t2, t3 = st.columns(3)
-                t1.metric("Test Accuracy", f"{test_results['accuracy']*100:.1f}%")
-                t2.metric("Test F1 Score", f"{test_results['f1_score']:.3f}")
-                t3.metric("Test Samples", test_results["n_samples"])
+        test_results = res.get("test_results")
+        if test_results:
+            st.subheader("Held-Out Test Performance")
+            t1, t2, t3 = st.columns(3)
+            t1.metric("Test Accuracy", f"{test_results['accuracy']*100:.1f}%")
+            t2.metric("Test F1 Score", f"{test_results['f1_score']:.3f}")
+            t3.metric("Test Samples", test_results["n_samples"])
 
-            col_cm, col_cv = st.columns(2)
-            with col_cm:
-                st.subheader("Confusion Matrix")
-                if os.path.exists(res["cm_path"]):
-                    st.image(res["cm_path"], width="stretch")
-            with col_cv:
-                st.subheader("Cross-Validation Scores")
-                if os.path.exists(res["cv_path"]):
-                    st.image(res["cv_path"], width="stretch")
+        col_cm, col_cv = st.columns(2)
+        with col_cm:
+            st.subheader("Confusion Matrix")
+            if os.path.exists(res["cm_path"]):
+                st.image(res["cm_path"], width="stretch")
+        with col_cv:
+            st.subheader("Cross-Validation Scores")
+            if os.path.exists(res["cv_path"]):
+                st.image(res["cv_path"], width="stretch")
 
-            if test_results and res.get("test_cm_path") and os.path.exists(res["test_cm_path"]):
-                st.subheader("Held-Out Test Confusion Matrix")
-                st.image(res["test_cm_path"], width="stretch")
+        if test_results and res.get("test_cm_path") and os.path.exists(res["test_cm_path"]):
+            st.subheader("Held-Out Test Confusion Matrix")
+            st.image(res["test_cm_path"], width="stretch")
 
-            st.subheader("Classification Report")
-            st.code(res["report"], language=None)
-            if test_results:
-                st.subheader("Held-Out Test Report")
-                st.code(test_results["report"], language=None)
+        st.subheader("Classification Report")
+        st.code(res["report"], language=None)
+        if test_results:
+            st.subheader("Held-Out Test Report")
+            st.code(test_results["report"], language=None)
 
-            st.subheader("Dataset Distribution")
-            fig_pie = go.Figure(go.Pie(
-                labels=["Good", "Defective"],
-                values=[res["n_good"], res["n_defective"]],
-                hole=0.5,
-                marker=dict(colors=["#2ecc71", "#e74c3c"]),
-            ))
-            fig_pie.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20))
-            st.plotly_chart(fig_pie, width="stretch")
+        st.subheader("Dataset Distribution")
+        fig_pie = go.Figure(go.Pie(
+            labels=["Good", "Defective"],
+            values=[res["n_good"], res["n_defective"]],
+            hole=0.5,
+            marker=dict(colors=["#2ecc71", "#e74c3c"]),
+        ))
+        fig_pie.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20))
+        st.plotly_chart(fig_pie, width="stretch")
 
 
 # ── Tab 4: Pipeline Viewer ───────────────────────────────────────────────────
@@ -496,54 +358,26 @@ with tab4:
     st.subheader("Pipeline Visualization")
     if st.session_state.last_result:
         r = st.session_state.last_result
-        if "detections" in r:
-            # R-CNN result
-            fig_pl = make_rcnn_pipeline_figure(r["stages"], r.get("detections", {}), figsize=(10, 4))
-            st.pyplot(fig_pl, width="stretch")
+        # R-CNN result
+        fig_pl = make_pipeline_figure(r["stages"], figsize=(14, 4))
+        st.pyplot(fig_pl, width="stretch")
 
-            st.subheader("R-CNN Pipeline Stages")
-            stage_info = {
-                "Original": "Raw input resized to 224×224.",
-                "Object Focus": "Automatically crops around the main object to reduce background mismatch.",
-                "R-CNN Input": "Final 224×224 RGB tensor fed into the Faster R-CNN network.",
-            }
-            cols = st.columns(3)
-            for i, (stage, desc) in enumerate(stage_info.items()):
-                with cols[i % 3]:
-                    st.markdown(f"**{stage}**")
-                    st.caption(desc)
-
-            if r.get("detections", {}).get("count", 0) > 0:
-                st.subheader("Detection Details")
-                det = r["detections"]
-                det_df = pd.DataFrame({
-                    "#": list(range(1, det["count"] + 1)),
-                    "Confidence": [f"{s*100:.1f}%" for s in det["scores"]],
-                    "Box (x1,y1,x2,y2)": [f"({b[0]:.0f}, {b[1]:.0f}, {b[2]:.0f}, {b[3]:.0f})"
-                                           for b in det["boxes"]],
-                })
-                st.dataframe(det_df, width="stretch", hide_index=True)
-        else:
-            # SVM result
-            fig_pl = make_pipeline_figure(r["stages"], figsize=(14, 4))
-            st.pyplot(fig_pl, width="stretch")
-
-            st.subheader("Stage Descriptions")
-            stage_info = {
-                "Original": "Raw input resized to 224x224.",
-                "Object Focus": "Automatically crops around the main object to reduce background mismatch.",
-                "Grayscale": "Color removed because defects are mostly structural rather than color-based.",
-                "Contrast Normalize": "CLAHE boosts local contrast so lighting changes do not dominate the prediction.",
-                "Gaussian Blur": "5×5 smoothing removes micro-texture noise before thresholding and gradients.",
-                "Sobel Edges": "Gradient magnitude highlights sharp boundaries that often correspond to defects.",
-                "Adaptive Threshold": "Locally thresholds reflective or unevenly lit surfaces more reliably.",
-                "Morphological Clean": "Closing and opening connect broken regions and suppress small noise blobs.",
-            }
-            cols = st.columns(3)
-            for i, (stage, desc) in enumerate(stage_info.items()):
-                with cols[i % 3]:
-                    st.markdown(f"**{stage}**")
-                    st.caption(desc)
+        st.subheader("Stage Descriptions")
+        stage_info = {
+            "Original": "Raw input resized to 224x224.",
+            "Object Focus": "Automatically crops around the main object to reduce background mismatch.",
+            "Grayscale": "Color removed because defects are mostly structural rather than color-based.",
+            "Contrast Normalize": "CLAHE boosts local contrast so lighting changes do not dominate the prediction.",
+            "Gaussian Blur": "5×5 smoothing removes micro-texture noise before thresholding and gradients.",
+            "Sobel Edges": "Gradient magnitude highlights sharp boundaries that often correspond to defects.",
+            "Adaptive Threshold": "Locally thresholds reflective or unevenly lit surfaces more reliably.",
+            "Morphological Clean": "Closing and opening connect broken regions and suppress small noise blobs.",
+        }
+        cols = st.columns(3)
+        for i, (stage, desc) in enumerate(stage_info.items()):
+            with cols[i % 3]:
+                st.markdown(f"**{stage}**")
+                st.caption(desc)
     else:
         st.info("Run an inspection in the Inspect tab to visualize the pipeline.")
 

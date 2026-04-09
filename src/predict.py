@@ -24,7 +24,7 @@ def predict_single(source, clf, scaler):
 
     Args:
         source: File path, PIL Image, or numpy array
-        clf: Trained SVM classifier
+        clf: Trained R-CNN classifier
         scaler: Fitted StandardScaler
 
     Returns:

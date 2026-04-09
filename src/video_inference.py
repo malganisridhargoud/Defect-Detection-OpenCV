@@ -21,8 +21,6 @@ def process_video(
     scaler,
     frame_skip: int = 2,
     progress_callback: Optional[Callable] = None,
-    model_type: str = "svm",
-    rcnn_model=None,
 ) -> dict:
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
@@ -51,10 +49,7 @@ def process_video(
 
         if frame_idx % frame_skip == 0:
             try:
-                if model_type == "rcnn" and rcnn_model is not None:
-                    result = _predict_frame_rcnn_wrapper(frame, rcnn_model)
-                else:
-                    result = _predict_frame(frame, clf, scaler)
+                result = _predict_frame(frame, clf, scaler)
                 last_result = result
             except Exception:
                 result = last_result
@@ -97,15 +92,6 @@ def process_video(
         "duration_s": duration_s,
         "defect_rate": defect_rate,
     }
-
-
-def _predict_frame_rcnn_wrapper(frame: np.ndarray, rcnn_model) -> dict:
-    """Wrapper to call R-CNN frame prediction with compatible output."""
-    from predict_rcnn import predict_frame_rcnn
-    result = predict_frame_rcnn(frame, rcnn_model)
-    if "threshold" not in result:
-        result["threshold"] = 0.5
-    return result
 
 
 def _predict_frame(frame: np.ndarray, clf, scaler) -> dict:

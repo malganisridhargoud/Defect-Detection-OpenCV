@@ -1,9 +1,4 @@
-"""
-feature_extract.py
-------------------
-Feature extraction tuned for surface-defect classification.
-Uses contour, edge, texture, and grayscale-distribution signals.
-"""
+
 
 import cv2
 import numpy as np

@@ -12,7 +12,7 @@ The project supports synthetic demo data generation, model training, single-imag
 DefectVision is designed for fast experimentation with industrial inspection workflows when you want an end-to-end app instead of a notebook. It lets you:
 
 - Generate a complete demo dataset with good and defective samples
-- Train either a classic SVM-based detector or a Faster R-CNN detector
+- Train either a classic R-CNN-based detector or a Faster R-CNN detector
 - Upload an image and classify it as `Good` or `Defective`
 - Upload a video and analyze defect probability over time
 - Visualize preprocessing and inference stages
@@ -22,7 +22,7 @@ DefectVision is designed for fast experimentation with industrial inspection wor
 ## Core Features
 
 - Dual-model workflow
-- Sidebar-driven model selection between `Classic (SVM)` and `R-CNN (Deep Learning)`
+- Sidebar-driven model selection between `Classic (R-CNN)` and `R-CNN (Deep Learning)`
 - Synthetic dataset generator for quick demos without external data
 - Support for real datasets placed in `data/train/good` and `data/train/defective`
 - Single-image inspection with annotated output, confidence, inference latency, and class probabilities
@@ -34,7 +34,7 @@ DefectVision is designed for fast experimentation with industrial inspection wor
 
 ## How The Two Models Work
 
-### 1. Classic SVM Pipeline
+### 1. Classic R-CNN Pipeline
 
 This path is lightweight and fast, and is a good fit when you want a compact traditional computer-vision baseline.
 
@@ -53,7 +53,7 @@ Workflow:
 
 Outputs:
 
-- `models/svm_model.pkl`
+- `models/rcnn_model.pkl`
 - `models/scaler.pkl`
 - `results/confusion_matrix.png`
 - `results/cv_scores.png`
@@ -74,9 +74,6 @@ Workflow:
 
 Outputs:
 
-- `models/rcnn_model.pth`
-- `results/rcnn_loss_curve.png`
-- `results/rcnn_confusion_matrix.png`
 
 ## App Overview
 
@@ -84,7 +81,7 @@ The app lives in [app.py](/abs/path/c:/Users/acer/Downloads/defect%20detection%2
 
 ### Sidebar
 
-- Choose active model: `Classic (SVM)` or `R-CNN (Deep Learning)`
+- Choose active model: `Classic (R-CNN)` or `R-CNN (Deep Learning)`
 - Check whether the currently selected model is already trained
 - Generate demo dataset
 - Train the selected model
@@ -107,12 +104,12 @@ The app lives in [app.py](/abs/path/c:/Users/acer/Downloads/defect%20detection%2
 
 ### Training Results
 
-- SVM metrics: accuracy, F1, cross-validation, confusion matrix, reports, dataset distribution
+- R-CNN metrics: accuracy, F1, cross-validation, confusion matrix, reports, dataset distribution
 - R-CNN metrics: test accuracy, test F1, final loss, loss curve, confusion matrix, report, dataset distribution
 
 ### Pipeline Viewer
 
-- SVM preprocessing stages from original image to cleaned mask
+- R-CNN preprocessing stages from original image to cleaned mask
 - R-CNN input stages plus detection details
 
 ### Batch History
@@ -135,15 +132,12 @@ defect_detection/
 |       |-- good/
 |       `-- defective/
 |-- models/
-|   |-- svm_model.pkl
+|   |-- rcnn_model.pkl
 |   |-- scaler.pkl
-|   `-- rcnn_model.pth
 |-- results/
 |   |-- confusion_matrix.png
 |   |-- cv_scores.png
 |   |-- test_confusion_matrix.png
-|   |-- rcnn_loss_curve.png
-|   `-- rcnn_confusion_matrix.png
 `-- src/
     |-- preprocess.py
     |-- feature_extract.py
@@ -229,7 +223,7 @@ The UI currently generates `400` good images and `400` defective images, then sp
 1. Install dependencies.
 2. Run `streamlit run app.py`.
 3. Click `Generate Demo Dataset`, or place your own dataset in the expected folders.
-4. Choose `Classic (SVM)` or `R-CNN (Deep Learning)`.
+4. Choose `Classic (R-CNN)` or `R-CNN (Deep Learning)`.
 5. Train the selected model.
 6. Use the `Inspect` tab for single images.
 7. Use the `Video Analysis` tab for videos.
@@ -239,9 +233,9 @@ The UI currently generates `400` good images and `400` defective images, then sp
 
 - [app.py](/abs/path/c:/Users/acer/Downloads/defect%20detection%20v2/defect_detection/app.py): Streamlit UI and workflow orchestration
 - [src/preprocess.py](/abs/path/c:/Users/acer/Downloads/defect%20detection%20v2/defect_detection/src/preprocess.py): Image preprocessing pipeline
-- [src/feature_extract.py](/abs/path/c:/Users/acer/Downloads/defect%20detection%20v2/defect_detection/src/feature_extract.py): Hand-crafted feature extraction for SVM
-- [src/train.py](/abs/path/c:/Users/acer/Downloads/defect%20detection%20v2/defect_detection/src/train.py): SVM training and evaluation
-- [src/predict.py](/abs/path/c:/Users/acer/Downloads/defect%20detection%20v2/defect_detection/src/predict.py): SVM single-image inference
+- [src/feature_extract.py](/abs/path/c:/Users/acer/Downloads/defect%20detection%20v2/defect_detection/src/feature_extract.py): Hand-crafted feature extraction for R-CNN
+- [src/train.py](/abs/path/c:/Users/acer/Downloads/defect%20detection%20v2/defect_detection/src/train.py): R-CNN training and evaluation
+- [src/predict.py](/abs/path/c:/Users/acer/Downloads/defect%20detection%20v2/defect_detection/src/predict.py): R-CNN single-image inference
 - [src/train_rcnn.py](/abs/path/c:/Users/acer/Downloads/defect%20detection%20v2/defect_detection/src/train_rcnn.py): Faster R-CNN training and evaluation
 - [src/predict_rcnn.py](/abs/path/c:/Users/acer/Downloads/defect%20detection%20v2/defect_detection/src/predict_rcnn.py): Faster R-CNN inference
 - [src/video_inference.py](/abs/path/c:/Users/acer/Downloads/defect%20detection%20v2/defect_detection/src/video_inference.py): Video analysis pipeline
@@ -278,7 +272,7 @@ Common preprocessing operations in the literature include:
 - Thresholding for separating suspect regions from background texture
 - Morphological opening and closing for removing small artifacts and joining broken boundaries
 
-These operations are still useful in industrial settings because they are interpretable, fast, and often robust when the imaging setup is controlled. In this project, the SVM pipeline follows that tradition closely through object-focused cropping, contrast normalization, thresholding, edge extraction, and morphology.
+These operations are still useful in industrial settings because they are interpretable, fast, and often robust when the imaging setup is controlled. In this project, the R-CNN pipeline follows that tradition closely through object-focused cropping, contrast normalization, thresholding, edge extraction, and morphology.
 
 ### Texture And Shape-Based Feature Engineering
 
@@ -293,7 +287,7 @@ The feature engineering strategy in `DefectVision` aligns with this literature. 
 
 This hybrid design reflects a common insight from classical inspection systems: no single handcrafted feature is sufficient across all defect types, but a combined descriptor can provide a useful decision surface.
 
-### SVMs And Anomaly Detection In Quality Control
+### R-CNNs And Anomaly Detection In Quality Control
 
 Support Vector Machines have a long history in industrial inspection because they work well on moderate-sized, structured feature vectors. In particular, `OneClassSVM` is suited for anomaly detection when normal samples are plentiful and defect samples are scarce, incomplete, or open-ended. This is a realistic assumption in production environments: manufacturers often know what a good part looks like, but defective parts may vary widely.
 
@@ -314,7 +308,7 @@ However, deep-learning systems often demand annotated data and larger compute bu
 
 Recent inspection literature increasingly combines classical and deep methods instead of treating them as mutually exclusive. Classical preprocessing is still valuable for reducing noise, normalizing lighting, or generating weak supervision, while deep models absorb more complex variation at inference time. `DefectVision` follows exactly this hybrid philosophy:
 
-- The SVM branch uses classical CV end to end.
+- The R-CNN branch uses classical CV end to end.
 - The R-CNN branch uses classical preprocessing to generate defect supervision.
 - The Streamlit UI exposes both methods under one workflow for comparison.
 
@@ -333,7 +327,7 @@ The project supports two data sources:
 
 The synthetic dataset generates metal-like surfaces and injects defects such as scratches, cracks, holes, stains, and dents. This makes the project runnable end to end even when no external benchmark dataset is available. In a real inspection setting, the user can replace these files with actual captured production images.
 
-The design assumption is that good and defective examples should be similar in framing, magnification, and lighting to eventual inference inputs. This matters because both the SVM branch and the R-CNN branch are sensitive to domain mismatch, especially when training data and deployment images differ in background or acquisition geometry.
+The design assumption is that good and defective examples should be similar in framing, magnification, and lighting to eventual inference inputs. This matters because both the R-CNN branch and the R-CNN branch are sensitive to domain mismatch, especially when training data and deployment images differ in background or acquisition geometry.
 
 ### 2. Preprocessing Pipeline
 
@@ -355,7 +349,7 @@ The object-focus stage is especially important because industrial uploads often 
 
 ### 3. Feature Extraction For The Classical Path
 
-The SVM branch depends on a 58-dimensional feature representation implemented in [src/feature_extract.py](/abs/path/c:/Users/acer/Downloads/defect%20detection%20v2/defect_detection/src/feature_extract.py). This representation is deliberately mixed rather than single-source.
+The R-CNN branch depends on a 58-dimensional feature representation implemented in [src/feature_extract.py](/abs/path/c:/Users/acer/Downloads/defect%20detection%20v2/defect_detection/src/feature_extract.py). This representation is deliberately mixed rather than single-source.
 
 The feature groups are:
 
@@ -432,7 +426,7 @@ The exact numeric results in this project depend on the dataset used, the select
 
 From a systems perspective, the results are meaningful in two different ways.
 
-For the `Classic (SVM)` branch:
+For the `Classic (R-CNN)` branch:
 
 - The system provides a fast anomaly baseline.
 - It works well when good samples are representative and defects create measurable departures in texture, edges, or contour structure.
@@ -453,7 +447,7 @@ The project also produces practical outputs beyond scalar metrics. Annotated ima
 Several implementation choices influence result quality:
 
 - Domain alignment is critical. If real inspection inputs differ sharply from the training set, especially in lighting or scale, both branches degrade.
-- The SVM branch depends heavily on preprocessing stability because its features are engineered from those processed representations.
+- The R-CNN branch depends heavily on preprocessing stability because its features are engineered from those processed representations.
 - The R-CNN branch depends on the quality of automatically generated pseudo-boxes. These boxes are convenient, but imperfect supervision can limit localization quality.
 - Synthetic data is useful for demonstration and debugging, but it is not a substitute for real production data when evaluating deployment readiness.
 
@@ -461,7 +455,7 @@ The architecture therefore fits best as a prototype or academic project that can
 
 ### Conclusion
 
-`DefectVision` demonstrates a complete and practical defect-detection system that bridges traditional computer vision and modern deep learning. The classical SVM path shows that well-designed preprocessing and handcrafted descriptors still offer strong value for industrial anomaly detection, especially when computational efficiency and limited labeled data matter. The Faster R-CNN path extends the system with localization capability and a more modern detection-oriented workflow.
+`DefectVision` demonstrates a complete and practical defect-detection system that bridges traditional computer vision and modern deep learning. The classical R-CNN path shows that well-designed preprocessing and handcrafted descriptors still offer strong value for industrial anomaly detection, especially when computational efficiency and limited labeled data matter. The Faster R-CNN path extends the system with localization capability and a more modern detection-oriented workflow.
 
 The main contribution of this project is not only model performance, but system design. It integrates data generation, training, evaluation, explanation, visualization, and deployment into one coherent application. This makes it useful for teaching, experimentation, benchmarking, and small-scale inspection prototyping.
 
@@ -477,7 +471,7 @@ Overall, the project shows that defect inspection can be approached effectively 
 
 ## References
 
-The following references are the most relevant conceptual and technical foundations for this project. They cover edge-based image processing, texture representation, SVM-based learning, anomaly detection, object detection, and industrial anomaly benchmarks.
+The following references are the most relevant conceptual and technical foundations for this project. They cover edge-based image processing, texture representation, R-CNN-based learning, anomaly detection, object detection, and industrial anomaly benchmarks.
 
 1. N. Otsu, “A Threshold Selection Method from Gray-Level Histograms,” *IEEE Transactions on Systems, Man, and Cybernetics*, vol. 9, no. 1, pp. 62–66, 1979.
 
