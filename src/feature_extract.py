@@ -1,24 +1,20 @@
+"""
+Feature extraction for the SVM defect detector.
 
+Only OpenCV and NumPy are used here to keep the project stack small.
+"""
 
 import cv2
 import numpy as np
-from skimage.feature import local_binary_pattern
 
 
-LBP_RADIUS = 3
-LBP_N_POINTS = 8 * LBP_RADIUS
-LBP_METHOD = "uniform"
-LBP_BINS = LBP_N_POINTS + 2
-FEATURE_VECTOR_LENGTH = 58
+LBP_BINS = 26
+HOG_LENGTH = 1764
+FEATURE_VECTOR_LENGTH = 14 + LBP_BINS + 6 + 12 + 18 + HOG_LENGTH
 
 
 def extract_shape_features(cleaned_img: np.ndarray) -> np.ndarray:
-    """
-    Extract contour-derived features from the binary defect mask.
-
-    Returns:
-        Feature vector of length 14.
-    """
+    """Extract contour-derived features from the binary defect mask."""
     contours, _ = cv2.findContours(
         cleaned_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
@@ -33,9 +29,7 @@ def extract_shape_features(cleaned_img: np.ndarray) -> np.ndarray:
         area = cv2.contourArea(cnt)
         perimeter = cv2.arcLength(cnt, True)
         x, y, w, h = cv2.boundingRect(cnt)
-
-        hull = cv2.convexHull(cnt)
-        hull_area = cv2.contourArea(hull)
+        hull_area = cv2.contourArea(cv2.convexHull(cnt))
 
         areas.append(area)
         perimeters.append(perimeter)
@@ -47,7 +41,7 @@ def extract_shape_features(cleaned_img: np.ndarray) -> np.ndarray:
     hu = cv2.HuMoments(cv2.moments(largest)).flatten()
     hu = -np.sign(hu) * np.log10(np.abs(hu) + 1e-10)
 
-    features = np.array([
+    return np.array([
         np.sum(areas),
         np.max(areas),
         np.mean(areas),
@@ -59,17 +53,27 @@ def extract_shape_features(cleaned_img: np.ndarray) -> np.ndarray:
         np.mean(extents),
         *hu[:5],
     ], dtype=np.float32)
-    return features
 
 
 def extract_lbp_features(gray_img: np.ndarray) -> np.ndarray:
-    """Extract normalized LBP histogram from contrast-normalized grayscale input."""
-    lbp = local_binary_pattern(
-        gray_img, LBP_N_POINTS, LBP_RADIUS, method=LBP_METHOD
-    )
-    hist, _ = np.histogram(
-        lbp.ravel(), bins=LBP_BINS, range=(0, LBP_BINS), density=True
-    )
+    """
+    Extract a compact Local Binary Pattern histogram.
+
+    OpenCV/NumPy implementation keeps the project dependency-light.
+    """
+    gray = gray_img.astype(np.uint8, copy=False)
+    center = gray[1:-1, 1:-1]
+    neighbors = [
+        gray[:-2, :-2], gray[:-2, 1:-1], gray[:-2, 2:],
+        gray[1:-1, 2:], gray[2:, 2:], gray[2:, 1:-1],
+        gray[2:, :-2], gray[1:-1, :-2],
+    ]
+
+    lbp = np.zeros_like(center, dtype=np.uint8)
+    for bit, neighbor in enumerate(neighbors):
+        lbp |= ((neighbor >= center).astype(np.uint8) << bit)
+
+    hist, _ = np.histogram(lbp.ravel(), bins=LBP_BINS, range=(0, 256), density=True)
     return hist.astype(np.float32)
 
 
@@ -111,15 +115,56 @@ def extract_statistical_features(gray_img: np.ndarray) -> np.ndarray:
     ], dtype=np.float32)
 
 
-def extract_all_features(cleaned_img: np.ndarray, gray_img: np.ndarray) -> np.ndarray:
-    """
-    Combine contour, texture, gradient, and grayscale statistics.
+def extract_color_features(bgr_img: np.ndarray) -> np.ndarray:
+    """Capture color changes that can indicate stains, burns, or coating issues."""
+    if len(bgr_img.shape) == 2:
+        bgr_img = cv2.cvtColor(bgr_img, cv2.COLOR_GRAY2BGR)
 
-    Total length: 14 + 26 + 6 + 12 = 58
-    """
-    shape_feats = extract_shape_features(cleaned_img)
-    lbp_feats = extract_lbp_features(gray_img)
-    edge_feats = extract_edge_features(gray_img, cleaned_img)
-    stat_feats = extract_statistical_features(gray_img)
-    features = np.concatenate([shape_feats, lbp_feats, edge_feats, stat_feats])
-    return features.astype(np.float32, copy=False)
+    hsv = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2HSV)
+    lab = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2LAB)
+    features = []
+
+    for image in (bgr_img, hsv, lab):
+        pixels = image.reshape(-1, 3).astype(np.float32)
+        features.extend(np.mean(pixels, axis=0))
+        features.extend(np.std(pixels, axis=0))
+
+    return np.array(features, dtype=np.float32)
+
+
+def extract_hog_features(gray_img: np.ndarray) -> np.ndarray:
+    """Extract HOG structure features using OpenCV."""
+    hog = cv2.HOGDescriptor(
+        _winSize=(224, 224),
+        _blockSize=(56, 56),
+        _blockStride=(28, 28),
+        _cellSize=(28, 28),
+        _nbins=9,
+    )
+    return hog.compute(gray_img.astype(np.uint8)).reshape(-1).astype(np.float32)
+
+
+def extract_all_features(
+    cleaned_img: np.ndarray,
+    gray_img: np.ndarray,
+    bgr_img: np.ndarray | None = None,
+) -> np.ndarray:
+    """Combine all features into one fixed-length SVM input vector."""
+    if bgr_img is None:
+        bgr_img = cv2.cvtColor(gray_img, cv2.COLOR_GRAY2BGR)
+
+    features = np.concatenate([
+        extract_shape_features(cleaned_img),
+        extract_lbp_features(gray_img),
+        extract_edge_features(gray_img, cleaned_img),
+        extract_statistical_features(gray_img),
+        extract_color_features(bgr_img),
+        extract_hog_features(gray_img),
+    ])
+
+    if len(features) != FEATURE_VECTOR_LENGTH:
+        raise ValueError(
+            f"Feature length mismatch: expected {FEATURE_VECTOR_LENGTH}, got {len(features)}"
+        )
+
+    return np.nan_to_num(features.astype(np.float32, copy=False))

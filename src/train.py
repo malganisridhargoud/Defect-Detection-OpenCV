@@ -1,58 +1,66 @@
 """
-train.py
---------
-Train an anomaly detector using good samples as the reference distribution.
-This is more robust than a closed-set classifier when uploaded defects differ
-from the examples seen during training.
+Train the supervised SVM defect detector.
+
+Expected dataset:
+    data/train/good
+    data/train/defective
+    data/test/good          optional
+    data/test/defective     optional
 """
 
 import os
+
+import cv2
 import joblib
 import numpy as np
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.decomposition import PCA
 from sklearn.metrics import (
-    accuracy_score, classification_report, confusion_matrix, f1_score
+    accuracy_score,
+    balanced_accuracy_score,
+    classification_report,
+    confusion_matrix,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
 )
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import GridSearchCV, StratifiedKFold, cross_val_score
+from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-from sklearn.svm import OneClassSVM
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import seaborn as sns
+from sklearn.svm import SVC
 
-from preprocess import full_pipeline, to_grayscale, resize, load_image, normalize_contrast, focus_on_object
-from feature_extract import extract_all_features, FEATURE_VECTOR_LENGTH
+from feature_extract import FEATURE_VECTOR_LENGTH, extract_all_features
+from preprocess import focus_on_object, full_pipeline, load_image, normalize_contrast, resize, to_grayscale
 
 
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "..", "models")
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "results")
+CLASS_NAMES = ["Good", "Defective"]
+MODEL_VERSION = "minimal_svm_v1"
+DEFECT_THRESHOLD = 0.25
 
 
 def load_dataset(data_dir: str):
-    """Load images from data_dir/good and data_dir/defective into feature vectors."""
+    """Load images from good/defective folders into feature vectors and labels."""
     X, y, paths = [], [], []
 
     for label_name, label_id in [("good", 0), ("defective", 1)]:
         folder = os.path.join(data_dir, label_name)
-        if not os.path.exists(folder):
+        if not os.path.isdir(folder):
             print(f"Warning: folder not found: {folder}")
             continue
 
-        files = [
+        files = sorted(
             f for f in os.listdir(folder)
-            if f.lower().endswith((".png", ".jpg", ".jpeg", ".bmp"))
-        ]
+            if f.lower().endswith((".png", ".jpg", ".jpeg", ".bmp", ".webp"))
+        )
         print(f"Loading {len(files)} {label_name} images...")
 
         for fname in files:
             fpath = os.path.join(folder, fname)
             try:
-                img = load_image(fpath)
-                focused = focus_on_object(img)
-                resized = resize(focused)
-                gray = normalize_contrast(to_grayscale(resized))
-                cleaned, _ = full_pipeline(focused, return_stages=True)
-                X.append(extract_all_features(cleaned, gray))
+                X.append(extract_features_from_image(fpath))
                 y.append(label_id)
                 paths.append(fpath)
             except Exception as exc:
@@ -61,293 +69,276 @@ def load_dataset(data_dir: str):
     return np.array(X, dtype=np.float32), np.array(y, dtype=np.int32), paths
 
 
-def build_detector():
-    """Factory for the anomaly model used throughout training and inference."""
-    return OneClassSVM(kernel="rbf", gamma="scale", nu=0.12)
+def extract_features_from_image(source) -> np.ndarray:
+    """Run the production preprocessing path and return one SVM feature vector."""
+    img = load_image(source)
+    focused = focus_on_object(img)
+    resized = resize(focused)
+    gray = normalize_contrast(to_grayscale(resized))
+    cleaned, _ = full_pipeline(focused, return_stages=True)
+    return extract_all_features(cleaned, gray, resized)
 
 
-def anomaly_scores(model, X_scaled: np.ndarray) -> np.ndarray:
-    """Higher score means more anomalous / more likely defective."""
-    return -model.decision_function(X_scaled).reshape(-1)
+def _cv_splitter(y: np.ndarray) -> StratifiedKFold:
+    min_class_count = int(np.min(np.bincount(y)))
+    n_splits = max(2, min(5, min_class_count))
+    return StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
 
 
-def calibrate_threshold(scores: np.ndarray, labels: np.ndarray) -> tuple[float, float]:
-    """
-    Pick the threshold that maximizes weighted F1 on labeled calibration data.
-    """
-    if len(scores) == 0:
-        return 0.0, 0.0
-
-    candidate_thresholds = np.unique(np.percentile(scores, np.linspace(5, 95, 91)))
-    best_threshold = float(np.median(scores))
-    best_f1 = -1.0
-
-    for threshold in candidate_thresholds:
-        preds = (scores >= threshold).astype(np.int32)
-        curr_f1 = f1_score(labels, preds, average="weighted")
-        if curr_f1 > best_f1:
-            best_f1 = float(curr_f1)
-            best_threshold = float(threshold)
-
-    return best_threshold, best_f1
-
-
-def conservative_threshold(scores: np.ndarray, labels: np.ndarray, tuned_threshold: float) -> float:
-    """
-    Favor fewer false defect alarms by ensuring most good samples remain good.
-    """
-    good_scores = scores[labels == 0]
-    if len(good_scores) == 0:
-        return tuned_threshold
-    good_guardrail = float(np.percentile(good_scores, 97))
-    return max(float(tuned_threshold), good_guardrail)
-
-
-def evaluate_dataset(data_dir: str, model_bundle, scaler):
-    """Evaluate a trained anomaly detector on a separate dataset folder."""
-    if not os.path.exists(data_dir):
-        return None
-
-    X_eval, y_eval, _ = load_dataset(data_dir)
-    if len(X_eval) == 0:
-        return None
-
-    X_eval_scaled = scaler.transform(X_eval)
-    scores = anomaly_scores(model_bundle["detector"], X_eval_scaled)
-    y_pred = (scores >= model_bundle["threshold"]).astype(np.int32)
-
-    return {
-        "n_samples": len(X_eval),
-        "accuracy": float(accuracy_score(y_eval, y_pred)),
-        "f1_score": float(f1_score(y_eval, y_pred, average="weighted")),
-        "report": classification_report(y_eval, y_pred, target_names=["Good", "Defective"]),
-        "confusion_matrix": confusion_matrix(y_eval, y_pred),
-    }
-
-
-def cross_validate_anomaly_model(X: np.ndarray, y: np.ndarray) -> list[float]:
-    """
-    Cross-validate by fitting only on good training samples and validating on both classes.
-    """
-    scores = []
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-
-    for train_idx, val_idx in cv.split(X, y):
-        X_train, y_train = X[train_idx], y[train_idx]
-        X_val, y_val = X[val_idx], y[val_idx]
-
-        good_mask = y_train == 0
-        if not np.any(good_mask):
-            continue
-
-        scaler = StandardScaler()
-        X_train_good_scaled = scaler.fit_transform(X_train[good_mask])
-        X_train_scaled = scaler.transform(X_train)
-        X_val_scaled = scaler.transform(X_val)
-
-        detector = build_detector()
-        detector.fit(X_train_good_scaled)
-
-        train_scores = anomaly_scores(detector, X_train_scaled)
-        threshold, _ = calibrate_threshold(train_scores, y_train)
-
-        val_scores = anomaly_scores(detector, X_val_scaled)
-        val_pred = (val_scores >= threshold).astype(np.int32)
-        scores.append(float(f1_score(y_val, val_pred, average="weighted")))
-
-    return scores
+def build_pipeline(n_samples: int, n_features: int) -> Pipeline:
+    """Create a compact SVM pipeline with PCA denoising for better generalization."""
+    n_components = max(2, min(80, n_samples - 1, n_features))
+    svm = SVC(kernel="rbf", class_weight="balanced", random_state=42)
+    calibrated_svm = CalibratedClassifierCV(
+        estimator=svm,
+        method="sigmoid",
+        cv=2,
+        ensemble=False,
+    )
+    return Pipeline([
+        ("scaler", StandardScaler()),
+        ("pca", PCA(n_components=n_components, whiten=True, random_state=42)),
+        ("svm", calibrated_svm),
+    ])
 
 
 def train_model(data_dir: str, progress_callback=None):
-    """
-    Train the anomaly detector and calibrate the defect threshold.
-    """
+    """Train, tune, evaluate, and save the supervised SVM classifier."""
     os.makedirs(MODELS_DIR, exist_ok=True)
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
     if progress_callback:
-        progress_callback(0.1, "Loading dataset...")
+        progress_callback(0.1, "Loading training images...")
 
     X, y, _ = load_dataset(data_dir)
     if len(X) == 0:
-        raise ValueError("No images found. Check data directory structure.")
-
-    good_mask = y == 0
-    if not np.any(good_mask):
-        raise ValueError("Need at least some good samples to learn the normal surface pattern.")
-
-    if progress_callback:
-        progress_callback(0.3, f"Loaded {len(X)} images. Normalizing features...")
-
-    scaler = StandardScaler()
-    X_good_scaled = scaler.fit_transform(X[good_mask])
-    X_all_scaled = scaler.transform(X)
+        raise ValueError("No images found. Expected data/train/good and data/train/defective.")
+    if len(np.unique(y)) < 2:
+        raise ValueError("SVM training needs both good and defective images.")
+    if len(X) < 6:
+        raise ValueError("Need at least 6 images for reliable SVM training.")
 
     if progress_callback:
-        progress_callback(0.5, "Training anomaly detector on good parts...")
+        progress_callback(0.35, f"Extracted {len(X)} feature vectors. Tuning SVM...")
 
-    detector = build_detector()
-    detector.fit(X_good_scaled)
+    cv = _cv_splitter(y)
+    pipeline = build_pipeline(len(X), X.shape[1])
+    search = GridSearchCV(
+        pipeline,
+        param_grid={
+            "svm__estimator__C": [1, 3, 10, 30],
+            "svm__estimator__gamma": ["scale", 0.01, 0.03, 0.1],
+        },
+        scoring="f1_weighted",
+        cv=cv,
+        n_jobs=-1,
+        refit=True,
+    )
+    search.fit(X, y)
+    model = search.best_estimator_
 
-    raw_scores = anomaly_scores(detector, X_all_scaled)
-    tuned_threshold, tuned_f1 = calibrate_threshold(raw_scores, y)
-    threshold = conservative_threshold(raw_scores, y, tuned_threshold)
-    y_pred = (raw_scores >= threshold).astype(np.int32)
+    if progress_callback:
+        progress_callback(0.7, "Evaluating trained model...")
 
-    acc = accuracy_score(y, y_pred)
-    f1 = f1_score(y, y_pred, average="weighted")
-    report = classification_report(y, y_pred, target_names=["Good", "Defective"])
-    cm = confusion_matrix(y, y_pred)
+    defect_threshold = DEFECT_THRESHOLD
+    train_results = evaluate_features(X, y, model, threshold=defect_threshold)
+    cv_scores = cross_val_score(model, X, y, cv=cv, scoring="f1_weighted", n_jobs=-1)
 
-    score_std = float(np.std(raw_scores) + 1e-6)
     model_bundle = {
-        "mode": "anomaly_detector",
+        "mode": MODEL_VERSION,
         "feature_length": FEATURE_VECTOR_LENGTH,
-        "detector": detector,
-        "threshold": float(threshold),
-        "score_mean": float(np.mean(raw_scores)),
-        "score_std": score_std,
-        "nu": 0.12,
+        "class_names": CLASS_NAMES,
+        "model": model,
+        "best_params": search.best_params_,
+        "best_cv_score": float(search.best_score_),
+        "defect_threshold": float(defect_threshold),
     }
 
     if progress_callback:
-        progress_callback(0.7, "Running cross-validation and evaluation...")
+        progress_callback(0.85, "Saving model and reports...")
 
-    cv_scores = cross_validate_anomaly_model(X, y)
-    cv_mean = float(np.mean(cv_scores)) if cv_scores else 0.0
-    cv_std = float(np.std(cv_scores)) if cv_scores else 0.0
+    joblib.dump(model_bundle, os.path.join(MODELS_DIR, "svm_model.pkl"))
+    # Keep a small compatibility artifact for older UI checks and easy inspection.
+    joblib.dump(model.named_steps["scaler"], os.path.join(MODELS_DIR, "scaler.pkl"))
 
-    if progress_callback:
-        progress_callback(0.85, "Saving model and plots...")
-
-    joblib.dump(model_bundle, os.path.join(MODELS_DIR, "rcnn_model.pkl"))
-    joblib.dump(scaler, os.path.join(MODELS_DIR, "scaler.pkl"))
-
-    cm_path = _plot_confusion_matrix(cm, RESULTS_DIR)
+    cm_path = _plot_confusion_matrix(train_results["confusion_matrix"], RESULTS_DIR)
     cv_path = _plot_cv_scores(np.array(cv_scores, dtype=np.float32), RESULTS_DIR)
 
     test_dir = os.path.join(os.path.dirname(data_dir), "test")
-    test_results = evaluate_dataset(test_dir, model_bundle, scaler)
+    test_results = evaluate_dataset(test_dir, model_bundle)
     test_cm_path = _plot_confusion_matrix(
         test_results["confusion_matrix"],
         RESULTS_DIR,
         filename="test_confusion_matrix.png",
-        title="Test Confusion Matrix",
+        title="Held-Out Test Confusion Matrix",
     ) if test_results else None
 
     if progress_callback:
-        progress_callback(1.0, "Training complete!")
+        progress_callback(1.0, "Training complete.")
 
     return {
         "n_samples": len(X),
         "n_good": int(np.sum(y == 0)),
         "n_defective": int(np.sum(y == 1)),
-        "accuracy": float(acc),
-        "f1_score": float(f1),
-        "cv_mean": cv_mean,
-        "cv_std": cv_std,
-        "cv_scores": cv_scores,
-        "report": report,
+        "accuracy": train_results["accuracy"],
+        "balanced_accuracy": train_results["balanced_accuracy"],
+        "f1_score": train_results["f1_score"],
+        "precision": train_results["precision"],
+        "recall": train_results["recall"],
+        "roc_auc": train_results["roc_auc"],
+        "report": train_results["report"],
         "cm_path": cm_path,
         "cv_path": cv_path,
+        "cv_mean": float(np.mean(cv_scores)),
+        "cv_std": float(np.std(cv_scores)),
+        "cv_scores": [float(score) for score in cv_scores],
+        "best_params": search.best_params_,
+        "best_cv_score": float(search.best_score_),
+        "defect_threshold": float(defect_threshold),
         "test_results": test_results,
         "test_cm_path": test_cm_path,
-        "threshold": float(threshold),
-        "tuned_f1": float(tuned_f1),
     }
 
 
-def _plot_confusion_matrix(
-    cm: np.ndarray, save_dir: str, filename: str = "confusion_matrix.png",
-    title: str = "Confusion Matrix"
-) -> str:
-    fig, ax = plt.subplots(figsize=(6, 5))
-    fig.patch.set_facecolor("#0f1117")
-    ax.set_facecolor("#0f1117")
+def evaluate_dataset(data_dir: str, model_bundle: dict):
+    """Evaluate a saved model bundle on a good/defective image folder."""
+    if not os.path.isdir(data_dir):
+        return None
 
-    sns.heatmap(
-        cm,
-        annot=True,
-        fmt="d",
-        cmap="Blues",
-        xticklabels=["Good", "Defective"],
-        yticklabels=["Good", "Defective"],
-        ax=ax,
-        linewidths=0.5,
-        annot_kws={"size": 16, "color": "white"},
+    X_eval, y_eval, _ = load_dataset(data_dir)
+    if len(X_eval) == 0 or len(np.unique(y_eval)) < 2:
+        return None
+
+    return evaluate_features(
+        X_eval,
+        y_eval,
+        model_bundle["model"],
+        threshold=float(model_bundle.get("defect_threshold", 0.5)),
     )
-    ax.set_xlabel("Predicted", color="white", fontsize=12)
-    ax.set_ylabel("Actual", color="white", fontsize=12)
-    ax.set_title(title, color="white", fontsize=14, pad=15)
-    ax.tick_params(colors="white")
-    for spine in ax.spines.values():
-        spine.set_edgecolor("#333")
 
-    plt.tight_layout()
+
+def evaluate_features(X: np.ndarray, y: np.ndarray, model: Pipeline, threshold: float = 0.5) -> dict:
+    """Calculate industry-style classification metrics."""
+    probabilities = model.predict_proba(X)[:, 1]
+    y_pred = (probabilities >= threshold).astype(np.int32)
+
+    return {
+        "n_samples": int(len(X)),
+        "accuracy": float(accuracy_score(y, y_pred)),
+        "balanced_accuracy": float(balanced_accuracy_score(y, y_pred)),
+        "f1_score": float(f1_score(y, y_pred, average="weighted")),
+        "precision": float(precision_score(y, y_pred, average="weighted", zero_division=0)),
+        "recall": float(recall_score(y, y_pred, average="weighted", zero_division=0)),
+        "roc_auc": _safe_auc(y, probabilities),
+        "report": classification_report(y, y_pred, target_names=CLASS_NAMES, zero_division=0),
+        "confusion_matrix": confusion_matrix(y, y_pred, labels=[0, 1]),
+        "defect_threshold": float(threshold),
+    }
+
+
+def _safe_auc(y_true: np.ndarray, probabilities: np.ndarray):
+    try:
+        return float(roc_auc_score(y_true, probabilities))
+    except ValueError:
+        return None
+
+
+def _plot_confusion_matrix(
+    cm: np.ndarray,
+    save_dir: str,
+    filename: str = "confusion_matrix.png",
+    title: str = "Training Confusion Matrix",
+) -> str:
+    canvas = np.full((520, 620, 3), (17, 24, 39), dtype=np.uint8)
+    white = (245, 245, 245)
+    blue = (180, 120, 40)
+    cell_w, cell_h = 170, 130
+    start_x, start_y = 210, 145
+    max_value = max(int(np.max(cm)), 1)
+
+    cv2.putText(canvas, title, (45, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.8, white, 2)
+    cv2.putText(canvas, "Predicted", (285, 105), cv2.FONT_HERSHEY_SIMPLEX, 0.65, white, 2)
+    cv2.putText(canvas, "Actual", (40, 285), cv2.FONT_HERSHEY_SIMPLEX, 0.65, white, 2)
+
+    for idx, name in enumerate(CLASS_NAMES):
+        cv2.putText(canvas, name, (start_x + idx * cell_w + 25, 132), cv2.FONT_HERSHEY_SIMPLEX, 0.55, white, 1)
+        cv2.putText(canvas, name, (105, start_y + idx * cell_h + 75), cv2.FONT_HERSHEY_SIMPLEX, 0.55, white, 1)
+
+    for row in range(2):
+        for col in range(2):
+            value = int(cm[row, col])
+            intensity = int(60 + 155 * value / max_value)
+            color = (intensity, 90, 45)
+            x1 = start_x + col * cell_w
+            y1 = start_y + row * cell_h
+            x2 = x1 + cell_w
+            y2 = y1 + cell_h
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, -1)
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), blue, 2)
+            cv2.putText(canvas, str(value), (x1 + 72, y1 + 75), cv2.FONT_HERSHEY_SIMPLEX, 1.2, white, 3)
+
     path = os.path.join(save_dir, filename)
-    plt.savefig(path, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
-    plt.close()
+    cv2.imwrite(path, canvas)
     return path
 
 
 def _plot_cv_scores(scores: np.ndarray, save_dir: str) -> str:
-    fig, ax = plt.subplots(figsize=(7, 4))
-    fig.patch.set_facecolor("#0f1117")
-    ax.set_facecolor("#0f1117")
+    canvas = np.full((440, 720, 3), (17, 24, 39), dtype=np.uint8)
+    white = (245, 245, 245)
+    axis = (150, 150, 150)
+    bar_color = (230, 120, 37)
+    mean_color = (35, 170, 245)
+    left, bottom, top = 70, 360, 80
+    chart_w = 610
+
+    cv2.putText(canvas, "Cross-Validation F1 Scores", (45, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.8, white, 2)
+    cv2.line(canvas, (left, top), (left, bottom), axis, 2)
+    cv2.line(canvas, (left, bottom), (left + chart_w, bottom), axis, 2)
 
     if len(scores) == 0:
         scores = np.array([0.0], dtype=np.float32)
-        folds = ["Fold 1"]
-    else:
-        folds = [f"Fold {i+1}" for i in range(len(scores))]
 
-    bars = ax.bar(folds, scores, color=["#3b82f6"] * len(scores), width=0.5, edgecolor="#1e3a5f")
-    ax.axhline(float(np.mean(scores)), color="#f59e0b", linestyle="--", linewidth=1.5,
-               label=f"Mean: {float(np.mean(scores)):.3f}")
-    ax.set_ylim(0, 1.1)
-    ax.set_ylabel("F1 Score", color="white")
-    ax.set_title("5-Fold Cross Validation Scores", color="white", fontsize=13)
-    ax.tick_params(colors="white")
-    ax.legend(facecolor="#1e293b", labelcolor="white")
-    for spine in ax.spines.values():
-        spine.set_edgecolor("#333")
+    gap = 18
+    bar_w = max(28, int((chart_w - gap * (len(scores) + 1)) / len(scores)))
+    for idx, score in enumerate(scores):
+        x1 = left + gap + idx * (bar_w + gap)
+        y1 = int(bottom - float(score) * (bottom - top))
+        cv2.rectangle(canvas, (x1, y1), (x1 + bar_w, bottom), bar_color, -1)
+        cv2.putText(canvas, f"{float(score):.2f}", (x1, max(25, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, white, 1)
+        cv2.putText(canvas, f"F{idx + 1}", (x1 + 4, bottom + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.45, white, 1)
 
-    for bar, score in zip(bars, scores):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.02,
-                f"{float(score):.3f}", ha="center", color="white", fontsize=10)
+    mean_y = int(bottom - float(np.mean(scores)) * (bottom - top))
+    cv2.line(canvas, (left, mean_y), (left + chart_w, mean_y), mean_color, 2)
+    cv2.putText(canvas, f"Mean {float(np.mean(scores)):.3f}", (left + chart_w - 150, mean_y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, mean_color, 1)
 
-    plt.tight_layout()
     path = os.path.join(save_dir, "cv_scores.png")
-    plt.savefig(path, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
-    plt.close()
+    cv2.imwrite(path, canvas)
     return path
 
 
 def load_model():
-    """Load detector and scaler from disk, rejecting stale incompatible files."""
-    model_path = os.path.join(MODELS_DIR, "rcnn_model.pkl")
-    scaler_path = os.path.join(MODELS_DIR, "scaler.pkl")
-
-    if not os.path.exists(model_path) or not os.path.exists(scaler_path):
+    """Load the supervised SVM bundle from disk and reject incompatible artifacts."""
+    model_path = os.path.join(MODELS_DIR, "svm_model.pkl")
+    if not os.path.exists(model_path):
         return None, None
 
     model_bundle = joblib.load(model_path)
-    scaler = joblib.load(scaler_path)
-
     if not isinstance(model_bundle, dict):
+        return None, None
+    if model_bundle.get("mode") != MODEL_VERSION:
         return None, None
     if model_bundle.get("feature_length") != FEATURE_VECTOR_LENGTH:
         return None, None
-    if model_bundle.get("mode") != "anomaly_detector":
-        return None, None
-    if getattr(scaler, "n_features_in_", None) not in (None, FEATURE_VECTOR_LENGTH):
+    if "model" not in model_bundle:
         return None, None
 
-    return model_bundle, scaler
+    return model_bundle, None
 
 
 if __name__ == "__main__":
     import sys
-    data_dir = sys.argv[1] if len(sys.argv) > 1 else "data/train"
-    results = train_model(data_dir)
-    print(f"\nModel saved. Accuracy: {results['accuracy']:.3f}")
+
+    train_dir = sys.argv[1] if len(sys.argv) > 1 else "data/train"
+    results = train_model(train_dir)
+    print(f"Model saved. Accuracy: {results['accuracy']:.3f}")
+    print(f"Best parameters: {results['best_params']}")
