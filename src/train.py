@@ -13,8 +13,6 @@ import os
 import cv2
 import joblib
 import numpy as np
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.decomposition import PCA
 from sklearn.metrics import (
     accuracy_score,
     balanced_accuracy_score,
@@ -25,7 +23,7 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
-from sklearn.model_selection import GridSearchCV, StratifiedKFold, cross_val_score
+from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
@@ -86,19 +84,15 @@ def _cv_splitter(y: np.ndarray) -> StratifiedKFold:
 
 
 def build_pipeline(n_samples: int, n_features: int) -> Pipeline:
-    """Create a compact SVM pipeline with PCA denoising for better generalization."""
-    n_components = max(2, min(80, n_samples - 1, n_features))
-    svm = SVC(kernel="rbf", class_weight="balanced", random_state=42)
-    calibrated_svm = CalibratedClassifierCV(
-        estimator=svm,
-        method="sigmoid",
-        cv=2,
-        ensemble=False,
-    )
+    """Create a simple scaler + SVM pipeline (no PCA, no calibration).
+
+    We keep `probability=True` so the UI can show class probabilities, but
+    avoid calibrated wrappers for simplicity in this resume-style project.
+    """
+    svm = SVC(kernel="rbf", class_weight="balanced", probability=True, random_state=42)
     return Pipeline([
         ("scaler", StandardScaler()),
-        ("pca", PCA(n_components=n_components, whiten=True, random_state=42)),
-        ("svm", calibrated_svm),
+        ("svm", svm),
     ])
 
 
@@ -122,35 +116,27 @@ def train_model(data_dir: str, progress_callback=None):
         progress_callback(0.35, f"Extracted {len(X)} feature vectors. Tuning SVM...")
 
     cv = _cv_splitter(y)
-    pipeline = build_pipeline(len(X), X.shape[1])
-    search = GridSearchCV(
-        pipeline,
-        param_grid={
-            "svm__estimator__C": [1, 3, 10, 30],
-            "svm__estimator__gamma": ["scale", 0.01, 0.03, 0.1],
-        },
-        scoring="f1_weighted",
-        cv=cv,
-        n_jobs=-1,
-        refit=True,
-    )
-    search.fit(X, y)
-    model = search.best_estimator_
+    # Manual parameter choice: keep defaults or pass C/gamma via function args later.
+    pipeline = build_pipeline()
+    # Report cross-validation performance for the chosen pipeline
+    cv_scores = cross_val_score(pipeline, X, y, cv=cv, scoring="f1_weighted", n_jobs=-1)
+    # Fit on full training data
+    pipeline.fit(X, y)
+    model = pipeline
 
     if progress_callback:
         progress_callback(0.7, "Evaluating trained model...")
 
     defect_threshold = DEFECT_THRESHOLD
     train_results = evaluate_features(X, y, model, threshold=defect_threshold)
-    cv_scores = cross_val_score(model, X, y, cv=cv, scoring="f1_weighted", n_jobs=-1)
 
     model_bundle = {
         "mode": MODEL_VERSION,
         "feature_length": FEATURE_VECTOR_LENGTH,
         "class_names": CLASS_NAMES,
         "model": model,
-        "best_params": search.best_params_,
-        "best_cv_score": float(search.best_score_),
+        "best_params": {"C": getattr(model.named_steps['svm'], 'C', None), "gamma": getattr(model.named_steps['svm'], 'gamma', None)},
+        "best_cv_score": float(np.mean(cv_scores)) if len(cv_scores) > 0 else None,
         "defect_threshold": float(defect_threshold),
     }
 
@@ -192,8 +178,8 @@ def train_model(data_dir: str, progress_callback=None):
         "cv_mean": float(np.mean(cv_scores)),
         "cv_std": float(np.std(cv_scores)),
         "cv_scores": [float(score) for score in cv_scores],
-        "best_params": search.best_params_,
-        "best_cv_score": float(search.best_score_),
+        "best_params": model_bundle["best_params"],
+        "best_cv_score": model_bundle["best_cv_score"],
         "defect_threshold": float(defect_threshold),
         "test_results": test_results,
         "test_cm_path": test_cm_path,

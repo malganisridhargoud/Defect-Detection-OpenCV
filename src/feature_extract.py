@@ -8,9 +8,9 @@ import cv2
 import numpy as np
 
 
-LBP_BINS = 26
 HOG_LENGTH = 1764
-FEATURE_VECTOR_LENGTH = 14 + LBP_BINS + 6 + 12 + 18 + HOG_LENGTH
+# Feature vector: 14 shape + 0 LBP + 0 Sobel edge stats + 10 statistical + 18 color + HOG
+FEATURE_VECTOR_LENGTH = 14 + 10 + 18 + HOG_LENGTH
 
 
 def extract_shape_features(cleaned_img: np.ndarray) -> np.ndarray:
@@ -55,44 +55,10 @@ def extract_shape_features(cleaned_img: np.ndarray) -> np.ndarray:
     ], dtype=np.float32)
 
 
-def extract_lbp_features(gray_img: np.ndarray) -> np.ndarray:
-    """
-    Extract a compact Local Binary Pattern histogram.
-
-    OpenCV/NumPy implementation keeps the project dependency-light.
-    """
-    gray = gray_img.astype(np.uint8, copy=False)
-    center = gray[1:-1, 1:-1]
-    neighbors = [
-        gray[:-2, :-2], gray[:-2, 1:-1], gray[:-2, 2:],
-        gray[1:-1, 2:], gray[2:, 2:], gray[2:, 1:-1],
-        gray[2:, :-2], gray[1:-1, :-2],
-    ]
-
-    lbp = np.zeros_like(center, dtype=np.uint8)
-    for bit, neighbor in enumerate(neighbors):
-        lbp |= ((neighbor >= center).astype(np.uint8) << bit)
-
-    hist, _ = np.histogram(lbp.ravel(), bins=LBP_BINS, range=(0, 256), density=True)
-    return hist.astype(np.float32)
+# LBP removed: HOG is used for texture, keep codebase minimal.
 
 
-def extract_edge_features(gray_img: np.ndarray, cleaned_img: np.ndarray) -> np.ndarray:
-    """Capture gradient strength and defect-mask occupancy."""
-    sobel_x = cv2.Sobel(gray_img, cv2.CV_32F, 1, 0, ksize=3)
-    sobel_y = cv2.Sobel(gray_img, cv2.CV_32F, 0, 1, ksize=3)
-    magnitude = cv2.magnitude(sobel_x, sobel_y)
-    edge_pixels = magnitude > float(np.mean(magnitude) + np.std(magnitude))
-    defect_pixels = cleaned_img > 0
-
-    return np.array([
-        float(np.mean(magnitude)),
-        float(np.std(magnitude)),
-        float(np.max(magnitude)),
-        float(np.mean(edge_pixels)),
-        float(np.mean(defect_pixels)),
-        float(np.sum(edge_pixels & defect_pixels) / cleaned_img.size),
-    ], dtype=np.float32)
+# Sobel-based edge statistics removed — HOG provides sufficient structural info.
 
 
 def extract_statistical_features(gray_img: np.ndarray) -> np.ndarray:
@@ -100,16 +66,14 @@ def extract_statistical_features(gray_img: np.ndarray) -> np.ndarray:
     pixels = gray_img.astype(np.float32).ravel()
     mean = np.mean(pixels)
     std = np.std(pixels)
-    centered = (pixels - mean) / (std + 1e-6)
-    percentiles = np.percentile(pixels, [5, 10, 25, 50, 75, 90, 95])
+    # Keep mean/std, selected percentiles and entropy. Remove skewness/kurtosis.
+    percentiles = np.percentile(pixels, [10, 25, 50, 75, 90, 95, 99])
     entropy_hist, _ = np.histogram(pixels, bins=32, range=(0, 256), density=True)
     entropy = -np.sum(entropy_hist * np.log2(entropy_hist + 1e-9))
 
     return np.array([
         mean,
         std,
-        float(np.mean(centered ** 3)),
-        float(np.mean(centered ** 4)),
         *percentiles,
         float(entropy),
     ], dtype=np.float32)
@@ -155,8 +119,6 @@ def extract_all_features(
 
     features = np.concatenate([
         extract_shape_features(cleaned_img),
-        extract_lbp_features(gray_img),
-        extract_edge_features(gray_img, cleaned_img),
         extract_statistical_features(gray_img),
         extract_color_features(bgr_img),
         extract_hog_features(gray_img),
