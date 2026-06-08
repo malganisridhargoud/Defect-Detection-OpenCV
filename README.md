@@ -6,7 +6,7 @@ DefectVision classifies whole-part images as `Good` or `Defective` using a small
 
 Image -> OpenCV preprocessing -> handcrafted features (HOG, shape, color, basic stats) -> StandardScaler -> SVM -> PASS/FAIL (+ confidence)
 
-## Reduced tech stack (what's kept)
+## tech stack 
 
 - Python (3.10+)
 - OpenCV (image preprocessing and HOG)
@@ -15,7 +15,7 @@ Image -> OpenCV preprocessing -> handcrafted features (HOG, shape, color, basic 
 - Streamlit (lightweight demo UI)
 - Pillow (image IO)
 
-Removed (not used anymore): PCA, GridSearchCV, CalibratedClassifierCV, LBP, Sobel-statistics, skewness/kurtosis, recursive feature elimination (RFE), SHAP-like explanations, and explicit probability calibration. The goal is clarity for a small resume project.
+
 
 ## Simple app workflow (plain words)
 
@@ -70,13 +70,3 @@ Or to run the training script directly (developer):
 python -m src.train data/train
 ```
 
-## Why these simplifications
-
-- Remove PCA/GridSearch/CalibratedClassifierCV to keep the code easy to explain during interviews and avoid introducing concepts that aren't essential for a small dataset.
-- Remove LBP/Sobel/skewness/kurtosis and SHAP to focus on HOG, shape and color features which are easier to justify and reason about.
-
-If you want any metric visualizations (precision-recall curve, confusion matrix image) embedded in the README or results folder, I can generate and add them.
-
----
-
-If you'd like me to (A) add a short section to the README describing how to interpret the confusion matrix, (B) include a small example image and its annotated output, or (C) run a quick augmentation+retrain experiment, tell me which and I'll proceed.
