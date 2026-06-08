@@ -90,10 +90,7 @@ with st.sidebar:
     st.divider()
     st.subheader("Dataset")
 
-    if st.button("Generate Demo Dataset", width="stretch"):
-        with st.spinner("Generating synthetic inspection images..."):
-            n_images = modules["generate_dataset"](DATA_DIR, n_good=400, n_defective=400)
-        st.success(f"Generated {n_images} images")
+    # Demo dataset generation removed from UI — kept demo buttons in Inspect tab.
 
     with st.expander("Dataset Layout"):
         st.caption(
