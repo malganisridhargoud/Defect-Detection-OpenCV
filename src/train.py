@@ -83,7 +83,7 @@ def _cv_splitter(y: np.ndarray) -> StratifiedKFold:
     return StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
 
 
-def build_pipeline(n_samples: int, n_features: int) -> Pipeline:
+def build_pipeline() -> Pipeline:
     """Create a simple scaler + SVM pipeline (no PCA, no calibration).
 
     We keep `probability=True` so the UI can show class probabilities, but
