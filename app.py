@@ -28,7 +28,21 @@ st.set_page_config(
 
 @st.cache_resource(show_spinner=False)
 def get_modules():
-    from generate_demo_data import generate_dataset, make_defective_surface, make_good_surface
+    # generate_demo_data may have been removed; provide safe fallbacks if missing.
+    try:
+        from generate_demo_data import generate_dataset, make_defective_surface, make_good_surface
+    except Exception:
+        def generate_dataset(*args, **kwargs):
+            raise RuntimeError("Demo dataset generation is not available. `generate_demo_data` module missing.")
+
+        def make_defective_surface():
+            import numpy as _np
+            return _np.full((256, 256, 3), 50, dtype=_np.uint8)
+
+        def make_good_surface():
+            import numpy as _np
+            return _np.full((256, 256, 3), 200, dtype=_np.uint8)
+
     from predict import predict_single
     from train import load_model, train_model
 
